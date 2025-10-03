@@ -1,0 +1,365 @@
+---
+title: "STATS 101A Final Project"
+author: "ISAAC YU - GROUP 12"
+date: "`r format(Sys.Date(), '%D')`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    code_folding: show
+---
+
+```{r}
+library(car)
+library(leaps)
+```
+
+## Dataset Import & Data Cleaning
+
+
+Observing the data before implementing any models, we saw that we needed to either remove entries and/or interpolate observations due to NULL values. At a glance, we wanted to engineer a model to predict the gross revenue of a movie based on the following numerical variables: Budget, Run time, Rating, and Rating Count. This would mean we do not need to implement a logistic regression model nor create any dummy variables for categorical variables. The reason why we chose not to utilize any categorical variables in our model was because 1. it would be difficult and tedious to force variables, such as Genre and MPAA Rating, into binary categorical variables. Below shows how we imported the dataset, removed unnecessary observations, altered data types, and checked for NULL values and interpolated them.
+
+
+```{r}
+# Import data & store
+movies <- read.csv("movies.csv")
+head(movies)
+```
+
+
+```{r}
+# Need to remove observations 511 - nrow(movies)
+movies[510:519, ]
+
+# Removes unnecessary observations
+movies <- movies[1:510, ]
+nrow(movies)
+```
+
+
+From observations 511 onward, the data does not make any sense, so they would not be sufficient in the model. As a result, they must be removed and we only utilized 510 observations in the dataset.
+
+
+```{r}
+# Remove the Summary variable to make our dataset more clear and clean
+movies$Summary <- NULL
+
+# All columns of the dataset are of the character data type, so need to manipulate them into numeric to use in a Linear Regression model
+str(movies)
+```
+
+
+```{r}
+# Manipulating columns into numeric
+movies$Budget <- as.numeric(movies$Budget)
+movies$Gross <- as.numeric(movies$Gross)
+movies$Runtime <- as.numeric(movies$Runtime)
+movies$Rating <- as.numeric(movies$Rating)
+movies$Rating.Count <- as.numeric(movies$Rating.Count)
+str(movies)
+```
+
+
+```{r}
+# Tests if there are any NA values in the Dataset
+movies[is.na(movies[, c("Budget", "Gross", "Runtime", "Rating", "Rating.Count")])]
+```
+
+
+We have at least one NULL values for Rating and Rating Count. Must check histogram to see what to interpolate the values with.
+
+
+```{r}
+# There are two entries where there are NULL values for Rating or Rating Count
+sum(is.na(movies$Rating))
+movies <- subset(movies, !is.na(movies$Rating))
+sum(is.na(movies$Rating.Count))
+movies <- subset(movies, !is.na(movies$Rating.Count))
+
+# No more NULL values
+sum(is.na(movies$Rating))
+sum(is.na(movies$Rating.Count))
+```
+
+
+There are now no NULL values within in the dataset and the data is now prepared to be fit onto the regression model.
+
+
+## Developing the Intial Model
+
+
+For our initial model, we wanted to predict Gross Revenue based on the following predictor variables: Budget, Run time, Rating, and Rating Count. Since they are all numerical variables, implementing a linear regression model is appropriate.
+
+
+```{r}
+attach(movies)
+```
+
+
+```{r}
+# Create histogram matrix
+par(mfrow = c(2,3))
+hist(movies$Gross)
+hist(movies$Budget)
+hist(movies$Runtime)
+hist(movies$Rating)
+hist(movies$Rating.Count)
+```
+
+
+All variables seem to be right skewed except for Rating. This would hint that we would need to manipulate the response and predictor variables in order to make them jointly normal for the model.
+
+
+```{r}
+# Create a correlation matrix of all variables
+pairs(movies[, c("Budget", "Gross", "Runtime", "Rating", "Rating.Count")])
+```
+
+
+Many nonlinear relationships in the data, as shown by the correlation matrix. A non-linear relationship between Rating and Rating count is observed so it might hint towards multicollinearity in our model. However, other variables do not seem that highly correlated with one another, therefore we will still check to see if Rating and Rating Count contribute towards multicollinearity in our model using VIF.
+
+
+```{r}
+# Developing the intial model
+m1 <- lm(Gross~Budget+Runtime+Rating+Rating.Count, data = movies)
+summary(m1)
+```
+
+
+Only 2 significant predictor variables, very large RSE (s^2). Budget and Rating Count seem to be the only predictor variables that are significant in our initial model. The F-value is high and the p-value is significant, therefore we can conclude that one or more of the predictor variables are significant. Our R-squared value of 53.19% hint that 53.19% of the variance in Gross revenue is explained by the predictor variables. Definitely some room for improvement.
+
+
+```{r}
+#Diagnostic plots
+par(mfrow = c(2, 2))
+plot(m1)
+```
+
+
+Residual vs. Fitted: Seem to be centered around 0 and relatively straight. The assumption of linearity is withheld in our intial model. Does hint at some outliers, leverage points, and/or influential points.
+Normal Q-Q Plot: The points have heavy tails and deviate heavily from the reference line on the tails. Therefore the normality of the error terms assumption is violated.
+Scale-Location Plot: Some heavy grouping around lesser values of Y hat and points open up in a funnel shape around higher values of Y hat. Therefore, the assumption of constant variance is broken.
+Residuals vs. Leverage: Seem to be a moderate amount of outliers, leverage points, and influential points.
+
+
+## Developing the Transformed Model
+
+
+Since the initial model violates the regression assumptions, we must include transformations and manipulate the data in order to withhold the assumptions and uphold the predicting power of our model. As hinted earlier, the skewedness of each variable indicated that we would need to transform both the response and predictor variables.
+
+
+```{r}
+# Do a box-cox transformation for only predictor (X) variables
+summary(powerTransform(cbind(Budget, Runtime, Rating, Rating.Count)~1), data = movies)
+```
+
+
+```{r}
+# Do an inverse-response plot for response (Y) variable
+par(mfrow = c(1, 1))
+inverseResponsePlot(m1, key = TRUE)
+```
+
+
+```{r}
+# Do a box-cox transformation for BOTH response (Y) and predictor (X) variables
+summary(powerTransform(cbind(Gross, Budget, Runtime, Rating, Rating.Count)~1), data = movies)
+```
+
+
+Log transformations for the response variable, Gross, and predictor variable, Run Time. Power transformations for the other predictor variables. Supported by both inverse response plot and box-cox methods.
+
+
+```{r}
+# Transform data and put into a new dataset for clarity
+transformed_movies <- data.frame(matrix(ncol = 5, nrow = nrow(movies)))
+colnames(transformed_movies) <- c("Gross", "Budget", "Runtime", "Rating", "Rating.Count")
+transformed_movies$Gross <- log(movies$Gross)
+transformed_movies$Budget <- (movies$Budget)^0.33
+transformed_movies$Runtime <- log(movies$Runtime)
+transformed_movies$Rating <- (movies$Rating)^2.9
+transformed_movies$Rating.Count <- (movies$Rating.Count)^0.21
+head(transformed_movies)
+```
+
+
+```{r}
+# Plot transformed model
+m2 <- lm(Gross~Budget+Runtime+Rating+Rating.Count, data = transformed_movies)
+summary(m2)
+```
+
+
+Three significant predictors with a very small RSE (s^2). Now, most of our predictor variables are significant, Budget, Rating, and Rating Count with Run Time not being a significant predictor. Our R-squared is now 61.81% which indicates that our model describes 61.81% of the variability within the response variable. The F-value is still high with a small p-value which indicates that there is still at least one or more significant predictor variables.
+
+
+```{r}
+par(mfrow = c(2, 2))
+plot(m2)
+```
+
+
+Residuals vs. Fitted: Centered around 0, with random scattering of points. Red line is horizontal and straight, indicating linearity among variables. Linearity assumption holds.
+Normal Q-Q Plot: Points now follow along the reference line more closely. Upholds the normality assumption of error terms.
+Scale-Location Plot: Points seem more randomly scattered. Variance of the error term seems to be more or less constant.
+Residuals vs. Leverage Plot: Transformed model strongly reduced the number of outliers, leverage points, and influential points. However, we would still need to keep a look out for case 199 (more information on that later)
+
+
+```{r}
+pairs(Gross~Budget+Runtime+Rating+Rating.Count, data = transformed_movies)
+```
+
+
+Relationships among variables seem more linear, however Rating and Rating Count seem to be heavily correlated. Must check the VIF in order to check multicollinearity.
+
+
+```{r}
+par(mfrow = c(2, 2))
+StandRes1 <- rstandard(m2)
+plot(transformed_movies$Budget, StandRes1, ylab = "Standardized Residuals")
+plot(transformed_movies$Runtime, StandRes1, ylab = "Standardized Residuals")
+plot(transformed_movies$Rating, StandRes1, ylab = "Standardized Residuals")
+plot(transformed_movies$Rating.Count, StandRes1, ylab = "Standardized Residuals")
+```
+
+
+Residuals seem randomly scattered. Model fits well with the data. However, there may be some slight heteroscedascity, but it is minimized by the transformations.
+
+
+```{r}
+par(mfrow = c(2,2))
+avPlot(m2, variable = Budget, ask = FALSE)
+avPlot(m2, variable = Runtime, ask = FALSE)
+avPlot(m2, variable = Rating, ask = FALSE)
+avPlot(m2, variable = Rating.Count, ask = FALSE)
+```
+
+
+As we could see from the significance level from the summary output, Run time has little effect on the response variable. AV plot supports the summary output gained from our transformed model.
+
+
+```{r}
+vif(m2)
+```
+
+
+VIF shows that multicollinearity is not an issue (no values above 5). Therefore model/variable selection is not neccessary for our model.
+
+
+## Making Model More Interpretable
+
+
+However, with transformed data, it is difficult to interpret the outcome. For the sake of interpretability, we will consider log transformations paired alongside some power transformations in order to make our model more useful by others.
+
+
+```{r}
+# Box-cox transformation
+summary(powerTransform(cbind(Gross, Budget, Rating, Rating.Count, Runtime)~1), data = movies)
+```
+
+
+We will conduct log transformations on Gross, Budget, Rating Count, and Run Time in order to see whether or not our model is valid.
+
+
+```{r}
+# Make a new dataset in order for clarity
+log_movies <- data.frame(matrix(ncol = 5, nrow = nrow(movies)))
+colnames(log_movies) <- c("Gross", "Budget", "Runtime", "Rating", "Rating.Count")
+log_movies$Gross <- log(movies$Gross)
+log_movies$Budget <- log(movies$Budget)
+log_movies$Runtime <- log(movies$Runtime)
+log_movies$Rating <- (movies$Rating)^2.89
+log_movies$Rating.Count <- log(movies$Rating.Count)
+```
+
+
+```{r}
+# Fit the data to the model to see the result
+m3 <- lm(Gross~Budget+Runtime+Runtime+Rating+Rating.Count, data = log_movies)
+summary(m3)
+```
+
+
+Again, our model sees that Budget, Rating, and Rating Count are significant predictors of Gross via the t-tests. The F-value is moderately high and our p-value is still significant meaning that one or more of the predictor variables are significant. Our R-squared is still more than our initial model, but slightly less than our first transformation. 
+
+
+```{r}
+# Examine whether or not the model is valid
+par(mfrow = c(2,2))
+plot(m3)
+```
+
+
+Residual vs. Fitted: Linearity still holds, points still seemed to be randomly scattered around 0.
+Normal Q-Q Plot: Points seem to fall more or less on the reference line. Case 199, again, seems to deviate from the pattern. However, normality of the error term still seems to be withheld.
+Scale-Location: Points still seem to randomly scattered, case 199 again is an outlier. Constant variance holds.
+Residuals vs. Leverage: Case 199 does not seem to be an influential point, but we still need to explore whether or not case 199 is a bad leverage point.
+
+
+```{r}
+p <- 4
+n <- nrow(log_movies)
+hvalues <- hatvalues(m3)
+StandRes <- rstandard(m3)
+standarddev <- residuals(m3) / sqrt(1 - hvalues)
+
+plot(hvalues, standarddev, ylab = "Standardized Deviance Residuals", xlab = "Leverage Values", ylim = c(-3, 3), cex = 0.8)
+abline(v = 2 * ((p + 1) / n), lty = 2, col = "red")
+abline(h = 2, lty = 2, col = "red")
+abline(h = -2, lty = 2, col = "red")
+```
+
+
+As you can see, case 199 is not a bad leverage point, just a leverage point. So we do not need to worry about case 19, instead just keep an eye on it.
+
+
+```{r}
+pairs(Gross~Budget+Runtime+Rating+Rating.Count, data = log_movies)
+```
+
+
+```{r}
+par(mfrow = c(2, 2))
+StandRes2 <- rstandard(m3)
+plot(log_movies$Budget, StandRes1, ylab = "Standardized Residuals")
+plot(log_movies$Runtime, StandRes1, ylab = "Standardized Residuals")
+plot(log_movies$Rating, StandRes1, ylab = "Standardized Residuals")
+plot(log_movies$Rating.Count, StandRes1, ylab = "Standardized Residuals")
+```
+
+
+```{r}
+par(mfrow = c(2,2))
+avPlot(m3, variable = Budget, ask = FALSE)
+avPlot(m3, variable = Runtime, ask = FALSE)
+avPlot(m3, variable = Rating, ask = FALSE)
+avPlot(m3, variable = Rating.Count, ask = FALSE)
+```
+
+
+```{r}
+reduced_m3 <- lm(Gross~Budget+Rating+Rating.Count, data = log_movies)
+anova(reduced_m3, m3)
+```
+
+
+```{r}
+vif(m3)
+```
+
+
+Choose reduced model.
+
+
+## Summary
+
+Based on interpretability, we will go for the log reduced model (without Run Time) as our final model:
+
+
+```{r}
+summary(reduced_m3)
+```
+
+
+log(Gross) = 8.6286612 + 0.2937351 * log(Budget) - 0.0015393 * (Rating)^2.89 + 0.4912220 * log(Rating.Count)
